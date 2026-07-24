@@ -1,4 +1,4 @@
-name: Build OpenWrt 24.10.2 - R3P VPN Stable A
+name: Build OpenWrt 24.10.2 - R3P VPN Stable A v2
 
 "on":
   workflow_dispatch:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: r3p-openwrt-24.10.2-vpn-stable-a
+  group: r3p-openwrt-24.10.2-vpn-stable-a-v2
   cancel-in-progress: false
 
 jobs:
@@ -22,8 +22,7 @@ jobs:
       PROFILE: "xiaomi_mi-router-3-pro"
       IMAGEBUILDER_SHA256: "01334401f02973f5bd1f8db7ce7f7949bcfd231200f7715551a528223c8d22d6"
       PACKAGES: >-
-        luci
-        luci-ssl-openssl
+        luci-ssl
         luci-app-package-manager
         luci-i18n-base-vi
         luci-proto-wireguard
@@ -103,7 +102,7 @@ jobs:
           uci -q set luci.main.lang='vi'
           uci -q commit luci
 
-          # Install VPN/QoS tools but do not start unconfigured services.
+          # Keep VPN/QoS services disabled until they are configured.
           for svc in sqm pbr openvpn watchcat vnstat tailscale tailscaled; do
             if [ -x "/etc/init.d/${svc}" ]; then
               "/etc/init.d/${svc}" stop >/dev/null 2>&1 || true
@@ -119,11 +118,11 @@ jobs:
       - name: Build R3P sysupgrade firmware
         shell: bash
         run: |
-          set -euo pipefail
+          set -o pipefail
           make -C imagebuilder image \
             PROFILE="$PROFILE" \
             PACKAGES="$PACKAGES" \
-            FILES="$GITHUB_WORKSPACE/overlay"
+            FILES="$GITHUB_WORKSPACE/overlay" 2>&1 | tee imagebuilder-build.log
 
       - name: Verify and collect output
         shell: bash
@@ -137,6 +136,7 @@ jobs:
 
           mkdir -p output
           cp "$EXPECTED" output/
+          cp imagebuilder-build.log output/BUILD_LOG.txt
           sha256sum output/*.bin > output/SHA256SUMS
 
           make -C imagebuilder manifest \
@@ -148,6 +148,7 @@ jobs:
             echo "Target: $TARGET/$SUBTARGET"
             echo "Profile: $PROFILE"
             echo "ImageBuilder SHA256: $IMAGEBUILDER_SHA256"
+            echo "LuCI TLS backend: mbedTLS (luci-ssl)"
             echo
             echo "Packages:"
             printf '%s\n' $PACKAGES
@@ -158,7 +159,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OpenWrt-24.10.2-R3P-VPN-Stable-A
+          name: OpenWrt-24.10.2-R3P-VPN-Stable-A-v2
           path: output/
           if-no-files-found: error
           retention-days: 30
