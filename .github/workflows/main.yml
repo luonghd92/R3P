@@ -1,0 +1,164 @@
+name: Build OpenWrt 24.10.2 - R3P VPN Stable A
+
+"on":
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r3p-openwrt-24.10.2-vpn-stable-a
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    env:
+      VERSION: "24.10.2"
+      TARGET: "ramips"
+      SUBTARGET: "mt7621"
+      PROFILE: "xiaomi_mi-router-3-pro"
+      IMAGEBUILDER_SHA256: "01334401f02973f5bd1f8db7ce7f7949bcfd231200f7715551a528223c8d22d6"
+      PACKAGES: >-
+        luci
+        luci-ssl-openssl
+        luci-app-package-manager
+        luci-i18n-base-vi
+        luci-proto-wireguard
+        openvpn-openssl
+        luci-app-openvpn
+        pbr
+        luci-app-pbr
+        sqm-scripts
+        luci-app-sqm
+        ddns-scripts
+        luci-app-ddns
+        watchcat
+        luci-app-watchcat
+        vnstat2
+        luci-app-vnstat2
+        tailscale
+        ca-bundle
+        curl
+        nano
+        htop
+        tcpdump-mini
+
+    steps:
+      - name: Install ImageBuilder requirements
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            file \
+            gawk \
+            gettext \
+            git \
+            libncurses5-dev \
+            libncursesw5-dev \
+            libssl-dev \
+            python3 \
+            rsync \
+            unzip \
+            wget \
+            xsltproc \
+            xz-utils \
+            zlib1g-dev \
+            zstd
+
+      - name: Download and verify official ImageBuilder
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="openwrt-imagebuilder-${VERSION}-${TARGET}-${SUBTARGET}.Linux-x86_64.tar.zst"
+          URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${TARGET}/${SUBTARGET}/${ARCHIVE}"
+
+          wget --https-only --secure-protocol=TLSv1_2 --progress=dot:giga "$URL"
+          echo "${IMAGEBUILDER_SHA256}  ${ARCHIVE}" | sha256sum -c -
+
+          tar --zstd -xf "$ARCHIVE"
+          mv "openwrt-imagebuilder-${VERSION}-${TARGET}-${SUBTARGET}.Linux-x86_64" imagebuilder
+
+          make -C imagebuilder info | grep -F "$PROFILE"
+
+      - name: Create safe first-boot defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p overlay/etc/uci-defaults
+
+          cat > overlay/etc/uci-defaults/99-r3p-vpn-stable-a <<'EOF'
+          #!/bin/sh
+
+          uci -q set system.@system[0].hostname='OpenWrt-R3P'
+          uci -q set system.@system[0].zonename='Asia/Ho_Chi_Minh'
+          uci -q set system.@system[0].timezone='<+07>-7'
+          uci -q commit system
+
+          uci -q set luci.main.lang='vi'
+          uci -q commit luci
+
+          # Install VPN/QoS tools but do not start unconfigured services.
+          for svc in sqm pbr openvpn watchcat vnstat tailscale tailscaled; do
+            if [ -x "/etc/init.d/${svc}" ]; then
+              "/etc/init.d/${svc}" stop >/dev/null 2>&1 || true
+              "/etc/init.d/${svc}" disable >/dev/null 2>&1 || true
+            fi
+          done
+
+          exit 0
+          EOF
+
+          chmod 0755 overlay/etc/uci-defaults/99-r3p-vpn-stable-a
+
+      - name: Build R3P sysupgrade firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          make -C imagebuilder image \
+            PROFILE="$PROFILE" \
+            PACKAGES="$PACKAGES" \
+            FILES="$GITHUB_WORKSPACE/overlay"
+
+      - name: Verify and collect output
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE_DIR="imagebuilder/bin/targets/${TARGET}/${SUBTARGET}"
+          EXPECTED="${IMAGE_DIR}/openwrt-${VERSION}-${TARGET}-${SUBTARGET}-${PROFILE}-squashfs-sysupgrade.bin"
+
+          test -s "$EXPECTED"
+          file "$EXPECTED"
+
+          mkdir -p output
+          cp "$EXPECTED" output/
+          sha256sum output/*.bin > output/SHA256SUMS
+
+          make -C imagebuilder manifest \
+            PROFILE="$PROFILE" \
+            PACKAGES="$PACKAGES" > output/MANIFEST.txt
+
+          {
+            echo "OpenWrt version: $VERSION"
+            echo "Target: $TARGET/$SUBTARGET"
+            echo "Profile: $PROFILE"
+            echo "ImageBuilder SHA256: $IMAGEBUILDER_SHA256"
+            echo
+            echo "Packages:"
+            printf '%s\n' $PACKAGES
+          } > output/BUILD_INFO.txt
+
+          ls -lh output
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OpenWrt-24.10.2-R3P-VPN-Stable-A
+          path: output/
+          if-no-files-found: error
+          retention-days: 30
