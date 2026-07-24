@@ -1,0 +1,8 @@
+1. Giải nén file ZIP.
+2. Tạo repository GitHub mới.
+3. Upload toàn bộ nội dung bên trong thư mục đã giải nén lên repository.
+4. Vào Actions > Build OpenWrt R3P VPN Stable > Run workflow.
+5. Giữ version 24.10.2, Tailscale chọn true hoặc false.
+6. Khi build xanh, tải Artifact ở cuối trang.
+7. Giải nén Artifact, flash file sysupgrade.bin trong OpenWrt.
+8. Bỏ Keep settings, không Force upgrade.
